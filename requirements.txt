@@ -1,0 +1,5 @@
+librosa>=0.10
+numpy>=1.24
+matplotlib>=3.7
+sounddevice>=0.4      # audio playback; requires portaudio (brew install portaudio)
+scipy>=1.10           # bandpass filtering (ecosystem.py), KDE (portrait.py)
