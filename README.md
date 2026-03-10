@@ -1,246 +1,277 @@
-# Timbral Space Visualizer
+# Visualizador de Espacio Timbrico
 
-A Python script that analyzes audio and renders a **3D animated visualization** of its timbral characteristics. The result is a point cloud tracing a path through "timbral space" — a 3D coordinate system where each axis represents a different acoustic feature extracted from the audio signal.
+Un script en Python que analiza audio y genera una visualizacion 3D animada de sus caracteristicas timbricas. El resultado es una nube de puntos que traza un camino a traves del "espacio timbrico", un sistema de coordenadas 3D donde cada eje representa una caracteristica acustica distinta.
 
----
-
-## What is "Timbral Space"?
-
-Every sound has a **timbre** — the quality that lets you tell apart a flute from a guitar even when they play the same note at the same volume. Timbre is shaped by the distribution of energy across frequencies and how it changes over time.
-
-This script takes three measurable aspects of timbre and maps them to the three axes of a 3D space:
-
-| Axis | Feature | What it measures |
-|------|---------|-----------------|
-| **X** | Spectral Centroid (kHz) | The "center of mass" of the frequency spectrum. Higher values mean the sound is **brighter** (more high-frequency energy); lower values mean it is **darker**. A cymbal crash has a high centroid; a bass drum has a low one. |
-| **Y** | Spectral Bandwidth (kHz) | How **spread out** the energy is around the centroid. A pure sine wave has near-zero bandwidth (all energy at one frequency). A noisy sound like white noise has very high bandwidth. This is also called **spectral spread**. |
-| **Z** | RMS Loudness (dBFS) | The overall **energy level** of the sound at each moment, measured in decibels relative to full scale. Louder moments sit higher on this axis; silence drops to the bottom. This correlates with perceived **tonality/intensity**. |
-| **Color** | All three features | Each feature drives one HSV color channel: centroid → **hue** (red=dark, blue=bright), bandwidth → **saturation** (focused=muted, spread=vivid), loudness → **value** (quiet=dim, loud=bright). So color reinforces the same information as position. |
-
-As the audio plays, each analysis frame becomes a **dot** positioned in this 3D space. Consecutive dots are connected by a **line**, forming a trajectory — the path the sound traces through timbral space over time.
+Desde lo que les mostre ayer hice algunos ajustes (como por ejemplo combinar las 3 características en la variabilidad del color, lo que hace que "la identidad del sonido", como concepto que unifica estas 3 cualidades acústicas, se vea reflejada en los colores).
 
 ---
 
-## How the Audio Analysis Works
+## Que es el "Espacio Timbrico"?
 
-The script uses [librosa](https://librosa.org/), a widely-used Python library for audio and music analysis.
+El timbre es lo que nos permite distinguir una flauta de una guitarra aunque toquen la misma nota al mismo volumen. Depende de como se distribuye la energia en las frecuencias y de como eso cambia en el tiempo.
 
-### 1. Loading the audio
+Este script toma tres aspectos medibles del timbre y los asigna a los tres ejes de un espacio 3D, no son los únicos pero me parecieron interesantes y distintivos:
+
+| Eje | Caracteristica | Que mide |
+|-----|---------------|----------|
+| X | Centroide Espectral (kHz) | El "centro de masa" del espectro. Valores altos = sonido brillante (mas energia en agudos). Valores bajos = sonido oscuro. Un platillo tiene centroide alto; un bombo, bajo. |
+| Y | Ancho de Banda Espectral (kHz) | Que tan dispersa esta la energia alrededor del centroide. Una sinusoidal pura tiene ancho de banda casi nulo. El ruido blanco tiene uno muy alto. |
+| Z | Sonoridad RMS (dBFS) | El nivel de energia del sonido en cada momento, en decibeles. Los momentos fuertes quedan arriba; el silencio cae al fondo. |
+| Color | Las tres juntas | Centroide controla el tono (rojo=oscuro, azul=brillante), ancho de banda controla la saturacion (enfocado=apagado, disperso=vivido), sonoridad controla el brillo del color (suave=tenue, fuerte=brillante). |
+
+A medida que el audio avanza, cada cuadro de analisis se convierte en un punto en este espacio. Los puntos consecutivos se conectan con una linea, formando la trayectoria que el sonido traza a lo largo del tiempo.
+
+---
+
+## Como funciona el analisis
+
+El script usa [librosa](https://librosa.org/) para el analisis de audio.
+
+### 1. Carga del audio
 
 ```python
 y, sr = librosa.load(audio_path, sr=None, mono=True)
 ```
 
-- `y` is a 1D numpy array of audio samples (converted to mono if stereo).
-- `sr` is the sample rate (e.g., 44100 Hz). Using `sr=None` preserves the file's native sample rate rather than resampling.
+- `y` es un array de numpy con las muestras de audio (convertido a mono si es estereo).
+- `sr` es la tasa de muestreo (ej. 44100 Hz). Con `sr=None` se preserva la tasa nativa del archivo.
 
-### 2. Frame-by-frame feature extraction
+### 2. Extraccion de caracteristicas cuadro a cuadro
 
-The audio is divided into overlapping frames using a sliding window. Two parameters control this:
+El audio se divide en cuadros superpuestos con una ventana deslizante. Los dos parametros que controlan esto son:
 
-- **`N_FFT = 2048`** — The size of each FFT window in samples. At 44100 Hz, this is about 46 ms of audio. Larger windows give better frequency resolution but worse time resolution.
-- **`HOP_LENGTH = 512`** — How far the window advances between frames, in samples. At 44100 Hz, this means one analysis frame every ~11.6 ms, giving roughly 86 frames per second of audio.
+- `N_FFT = 2048`: tamanio de cada ventana FFT en muestras. A 44100 Hz son unos 46 ms de audio. Ventanas mas grandes dan mejor resolucion en frecuencia pero peor resolucion temporal.
+- `HOP_LENGTH = 512`: cuanto avanza la ventana entre cuadros. A 44100 Hz, un cuadro cada ~11.6 ms, o sea ~86 cuadros por segundo.
 
-For each frame, three features are computed:
+Para cada cuadro se calculan tres cosas:
 
-#### Spectral Centroid
+#### Centroide Espectral
 
 ```python
 centroid = librosa.feature.spectral_centroid(y=y, sr=sr, n_fft=2048, hop_length=512)
 ```
 
-The spectral centroid is the weighted mean of frequencies present in the signal, where the weights are the magnitudes of each frequency bin. It is calculated as:
+La media ponderada de las frecuencias presentes en la señal, usando las magnitudes como pesos:
 
 ```
-centroid = sum(frequency[k] * magnitude[k]) / sum(magnitude[k])
+sum(frecuencia[k] * magnitud[k]) / sum(magnitud[k])
 ```
 
-The result is in Hz and is converted to kHz for display. Think of it as "where is the average frequency energy located?" — a single number that summarizes the brightness of the sound at that moment.
+El resultado esta en Hz y se convierte a kHz para mostrar. Es un numero que resume que tan brillante suena algo en ese instante.
 
-#### Spectral Bandwidth
+#### Ancho de Banda Espectral
 
 ```python
 bandwidth = librosa.feature.spectral_bandwidth(y=y, sr=sr, n_fft=2048, hop_length=512)
 ```
 
-The spectral bandwidth (or spectral spread) measures how wide the frequency distribution is around the centroid. It is the weighted standard deviation of frequencies:
+Mide que tan amplia es la distribucion de frecuencias alrededor del centroide. Es la desviacion estandar ponderada:
 
 ```
-bandwidth = sqrt( sum(magnitude[k] * (frequency[k] - centroid)^2) / sum(magnitude[k]) )
+sqrt( sum(magnitud[k] * (frecuencia[k] - centroide)^2) / sum(magnitud[k]) )
 ```
 
-A tonal sound with energy concentrated at a single frequency has low bandwidth. A noisy, broadband sound has high bandwidth.
+Un sonido tonal tiene ancho de banda bajo. Un sonido ruidoso de banda ancha lo tiene alto.
 
-#### RMS Energy (Loudness)
+#### Energia RMS (Sonoridad)
 
 ```python
 rms = librosa.feature.rms(y=y, hop_length=512)
 rms_db = librosa.amplitude_to_db(rms, ref=np.max)
 ```
 
-RMS (Root Mean Square) energy is the standard measure of signal amplitude:
+La RMS (Root Mean Square) es la medida estandar de amplitud de señal:
 
 ```
-rms = sqrt( (1/N) * sum(sample[k]^2) )
+rms = sqrt( (1/N) * sum(muestra[k]^2) )
 ```
 
-It is then converted to decibels relative to the maximum RMS value in the file (`ref=np.max`), so the loudest moment is at 0 dBFS and quieter moments are negative.
+Se convierte a decibeles relativos al maximo del archivo (`ref=np.max`), asi el momento mas fuerte queda en 0 dBFS y los mas suaves son negativos.
 
-### 3. Time alignment
+### 3. Alineacion temporal
 
 ```python
 times = librosa.frames_to_time(np.arange(n), sr=sr, hop_length=HOP_LENGTH)
 ```
 
-Each analysis frame is mapped to a timestamp (in seconds) so the visualization can be synchronized with audio playback.
+Cada cuadro se mapea a un timestamp en segundos para sincronizar la visualizacion con la reproduccion.
 
 ---
 
-## How the Visualization Works
+## La visualizacion
 
-The visualization is built with [matplotlib](https://matplotlib.org/) using its 3D projection capabilities and `FuncAnimation` for frame-by-frame animation.
+Construida con [matplotlib](https://matplotlib.org/) usando proyeccion 3D y `FuncAnimation` para animar cuadro a cuadro.
 
-### Visual elements
+### Elementos visuales
 
-Each animation frame renders three things:
+Cada cuadro de animacion dibuja:
 
-1. **Trail line** — A thin white line connecting the last `TRAIL_LENGTH` (70) analysis frames. This shows the recent trajectory through timbral space.
+1. Una linea blanca fina que conecta los ultimos 70 cuadros de analisis (la trayectoria reciente).
+2. Puntos coloreados a lo largo de esa estela. Crecen en tamaño del mas viejo al mas nuevo, como una cola de cometa. El color sale del mapeo HSV descrito arriba.
+3. Un punto blanco mas grande que marca la posicion actual.
 
-2. **Trail dots** — Colored scatter points along the trail. Their size increases from oldest (small, 6px) to newest (large, 38px), creating a "comet tail" effect. Color is derived from all three features via HSV mapping (see table above).
+### Rotacion de camara
 
-3. **Current dot** — A larger white dot (110px) with a subtle border marking the current position in timbral space.
+La camara rota lentamente alrededor de la escena (0.35 grados por cuadro) para dar sensacion de profundidad.
 
-### Camera rotation
+### Tema oscuro
 
-The 3D camera slowly rotates around the scene at `ROTATE_SPEED` (0.35) degrees per animation frame, giving a sense of depth as the trajectory builds up.
-
-### Dark theme
-
-The entire plot uses a dark color scheme (`#080810` background) with subtle grid lines, designed so the colored data points stand out.
+Fondo casi negro (`#080810`) con grilla sutil, para que los puntos de colores resalten.
 
 ---
 
-## Three Scripts
+## Los scripts
 
-### 1. `visualize.py` — Single file visualization
+### 1. `visualize.py` — Un archivo
 
 ```bash
-python visualize.py birdsong.wav                    # live window + audio
-python visualize.py birdsong.wav --export out.mp4   # save MP4 with audio
+python visualize.py canto_pajaro.wav                       # ventana en vivo + audio
+python visualize.py canto_pajaro.wav --export salida.mp4   # guardar MP4
 ```
 
-- **Live mode** (default): Opens an interactive matplotlib window and plays the audio through your speakers using [sounddevice](https://python-sounddevice.readthedocs.io/). The animation syncs to **wall-clock time**, so even if frames drop, the dot stays in sync with what you hear. You can rotate/zoom the 3D plot with your mouse.
-- **Export mode** (`--export`): Renders frames deterministically, pipes raw video to `ffmpeg`, then muxes the original audio on top (AAC at 192 kbps). No window opens.
+- En vivo (por defecto): abre una ventana de matplotlib y reproduce el audio con [sounddevice](https://python-sounddevice.readthedocs.io/). La animacion se sincroniza con el reloj del sistema, asi que aunque se pierdan cuadros el punto sigue en sync con lo que se escucha. Se puede rotar y hacer zoom con el mouse.
+- Exportacion (`--export`): renderiza los cuadros, los manda a `ffmpeg` y le agrega el audio original (AAC a 192 kbps). No abre ventana.
 
-### 2. `compare.py` — Side-by-side comparison of two files
+### 2. `compare.py` — Dos archivos
 
 ```bash
-python compare.py bird1.wav bird2.wav                    # live window
-python compare.py bird1.wav bird2.wav --export comp.mp4  # save MP4
+python compare.py pajaro1.wav pajaro2.wav                          # ventana en vivo
+python compare.py pajaro1.wav pajaro2.wav --export comparacion.mp4 # guardar MP4
 ```
 
-- Both tracks animate **simultaneously in the same 3D space** with shared axis scales so their trajectories are directly comparable.
-- Each track gets its own **color palette** — Track A in cyan/blue, Track B in orange/red — so you can tell them apart at a glance.
-- In export mode, both audio tracks are mixed together into the MP4's audio stream.
+Las dos pistas se animan a la vez en el mismo espacio 3D con ejes compartidos, para poder compararlas directamente. Cada una tiene su paleta de colores (cian/azul vs naranja/rojo). En exportacion, los dos audios se mezclan en la pista de audio del MP4.
 
-### 3. `live.py` — Real-time microphone visualization
+### 3. `live.py` — Microfono en tiempo real
 
 ```bash
-python live.py                    # listen indefinitely
-python live.py --duration 30      # stop after 30 seconds
-python live.py --window 15        # 15-second rolling window
+python live.py                    # escuchar indefinidamente
+python live.py --duration 30      # parar despues de 30 segundos
+python live.py --window 15        # ventana deslizante de 15 segundos
 ```
 
-- Captures audio from the **default input device** (microphone) and animates the timbral space in real time.
-- Uses a rolling window (default 10 seconds) — old data scrolls off as new data arrives.
-- Axis limits **auto-scale** smoothly using an exponential moving average, so the plot adapts to whatever you're recording without jumping around.
-- A pulsing red "LIVE" indicator confirms the system is listening.
+Captura audio del microfono y anima el espacio timbrico en tiempo real. Usa una ventana deslizante (10 segundos por defecto) donde los datos viejos se van descartando. Los ejes se auto-escalan con un promedio movil exponencial para adaptarse al audio entrante sin saltos bruscos. Un indicador rojo pulsante confirma que esta escuchando.
+
+### 4. `clean.py` — Sin ejes, solo la animacion
+
+```bash
+python clean.py canto_pajaro.wav                       # ventana en vivo + audio
+python clean.py canto_pajaro.wav --export salida.mp4   # guardar MP4
+```
+
+Hace lo mismo que `visualize.py` pero sin ningun elemento de grafico: sin ejes, sin grilla, sin etiquetas, sin barra de color. Solo la nube de puntos, la linea y el fondo oscuro. Sirve para ver la trayectoria timbrica como algo mas visual y menos tecnico.
 
 ---
 
-## Configuration
+## Configuracion
 
-All tuneable parameters are defined as constants at the top of the script:
+Todos los parametros ajustables estan definidos como constantes al inicio de cada script:
 
-| Constant | Default | Description |
-|----------|---------|-------------|
-| `HOP_LENGTH` | `512` | Analysis window hop in samples. Smaller = more frames = smoother animation but slower export. |
-| `N_FFT` | `2048` | FFT window size. Larger = better frequency resolution. |
-| `TRAIL_LENGTH` | `70` | Number of past analysis frames shown as the trailing "comet". |
-| `FPS` | `30` | Target animation frame rate. |
-| `ROTATE_SPEED` | `0.35` | Camera rotation speed in degrees per animation frame. |
-| `BG_COLOR` | `#080810` | Background color (near-black with a hint of blue). |
-| `GRID_COLOR` | `#14142a` | 3D grid/pane edge color. |
-| `SENSITIVITY` | `2.0` | Gamma curve exponent (>1 amplifies subtle feature differences in color/position). |
-| `PCT_LO` / `PCT_HI` | `2` / `98` | Percentiles used for contrast stretching (clips outliers so data fills the space). |
+| Constante | Default | Descripcion |
+|-----------|---------|-------------|
+| `HOP_LENGTH` | `512` | Salto de la ventana de analisis en muestras. Menor = mas cuadros = animacion mas suave pero exportacion mas lenta. |
+| `N_FFT` | `2048` | Tamanio de ventana FFT. Mayor = mejor resolucion en frecuencia. |
+| `TRAIL_LENGTH` | `70` | Cuantos cuadros pasados se muestran en la cola de cometa. |
+| `FPS` | `30` | Cuadros por segundo de la animacion. |
+| `ROTATE_SPEED` | `0.35` | Velocidad de rotacion de la camara (grados por cuadro). |
+| `BG_COLOR` | `#080810` | Color de fondo. |
+| `GRID_COLOR` | `#14142a` | Color de la grilla 3D. |
+| `SENSITIVITY` | `2.0` | Exponente gamma. Valores >1 amplifican diferencias sutiles en las caracteristicas. |
+| `PCT_LO` / `PCT_HI` | `2` / `98` | Percentiles para el estiramiento de contraste (recorta outliers). |
 
 ---
 
-## Installation
+## Instalacion
 
-### Prerequisites
+### Prerrequisitos
 
-- **Python 3.10+**
-- **ffmpeg** (for MP4 export): `brew install ffmpeg`
-- **portaudio** (for live audio playback): `brew install portaudio`
+- Python 3.10+
+- ffmpeg (para exportar MP4): `brew install ffmpeg`
+- portaudio (para reproduccion de audio): `brew install portaudio`
 
 ### Setup
 
 ```bash
-# Create and activate a virtual environment
 python3 -m venv venv
 source venv/bin/activate
-
-# Install dependencies
 pip install -r requirements.txt
 ```
 
-### Dependencies
+### Dependencias
 
-| Package | Purpose |
-|---------|---------|
-| `librosa` | Audio loading and spectral feature extraction |
-| `numpy` | Numerical arrays and operations |
-| `matplotlib` | 3D plotting and animation |
-| `sounddevice` | Real-time audio playback (optional — the script runs silently without it) |
+| Paquete | Para que |
+|---------|----------|
+| `librosa` | Carga de audio y extraccion de caracteristicas espectrales |
+| `numpy` | Arrays y operaciones numericas |
+| `matplotlib` | Graficos 3D y animacion |
+| `sounddevice` | Reproduccion de audio en tiempo real (opcional) |
 
 ---
 
-## Usage Examples
+## Ejemplos
 
 ```bash
-# Single file — live visualization with audio playback
-python visualize.py recording.wav
+# Un archivo, visualizacion en vivo con audio
+python visualize.py grabacion.wav
 
-# Single file — export as MP4 video with audio
-python visualize.py recording.wav --export timbral_space.mp4
+# Un archivo, exportar como MP4
+python visualize.py grabacion.wav --export espacio_timbrico.mp4
 
-# Compare two files side by side
-python compare.py bird1.wav bird2.wav
-python compare.py bird1.wav bird2.wav --export comparison.mp4
+# Comparar dos archivos
+python compare.py pajaro1.wav pajaro2.wav
+python compare.py pajaro1.wav pajaro2.wav --export comparacion.mp4
 
-# Real-time microphone visualization
+# Microfono en tiempo real
 python live.py
 python live.py --duration 60 --window 20
 
-# Works with any format librosa supports
-python visualize.py birdsong.mp3
-python visualize.py field_recording.flac
+# Funciona con cualquier formato que soporte librosa
+python visualize.py canto.mp3
+python visualize.py grabacion_campo.flac
 ```
 
 ---
 
-## Interpreting the Visualization
+## Como leer la visualizacion
 
-- **Tight clusters** mean the sound's timbre is stable (e.g., a sustained note).
-- **Long, fast-moving trails** mean the timbre is changing rapidly (e.g., a bird's trill sweeping through frequencies).
-- **High on the Z axis** = loud moments; **low** = quiet/silence.
-- **Right on the X axis** = bright/high-frequency sounds; **left** = dark/low-frequency sounds.
-- **High on the Y axis** = noisy/broadband; **low** = tonal/narrowband.
-- **Vivid colors** = spectrally spread (noisy/rich); **muted colors** = spectrally focused (tonal/pure).
-- **Bright dots** = loud moments; **dim dots** = quiet moments.
-- **Hue shifts** track brightness — redder hues for darker sounds, bluer hues for brighter sounds.
+- Agrupaciones compactas = timbre estable (una nota sostenida, por ejemplo).
+- Estelas largas y rapidas = timbre cambiando rapido (un trino de pajaro barriendo frecuencias).
+- Arriba en Z = fuerte. Abajo = silencio.
+- Derecha en X = brillante/agudo. Izquierda = oscuro/grave.
+- Arriba en Y = ruidoso/banda ancha. Abajo = tonal/banda estrecha.
+- Colores vividos = espectro disperso. Colores apagados = espectro enfocado.
+- Puntos brillantes = momentos fuertes. Puntos tenues = momentos suaves.
+- Tonos rojizos = sonidos oscuros. Tonos azulados = sonidos brillantes.
 
-For birdsong specifically, you'll typically see rapid jumps and spirals as the bird modulates pitch, volume, and harmonic content in quick succession — creating a complex, dynamic trajectory through timbral space.
+En el canto de pajaros se ven saltos y espirales rapidas porque el pajaro modula tono, volumen y armonicos en rapida sucesion.
 
-In **compare mode**, you can see how two recordings differ: if one bird's trajectory occupies a different region or traces a different shape, that reveals concrete differences in their timbral character.
+En modo comparacion se puede ver si dos grabaciones ocupan regiones distintas del espacio o trazan formas diferentes, lo que revela diferencias concretas en caracter timbrico.
+
+---
+
+## Para leer mas
+
+### Centroide Espectral
+
+La media ponderada de las frecuencias en el espectro, usando magnitudes como pesos. Es el descriptor mas usado de brillantez espectral y se correlaciona con que tan "agudo" o "apagado" se percibe un sonido.
+
+### Ancho de Banda Espectral
+
+Mide la dispersion del espectro alrededor del centroide: la desviacion estandar ponderada de las frecuencias. Un tono puro tiene ancho de banda casi nulo; un sonido ruidoso o armonicamente rico lo tiene alto. Captura que tan enfocado o difuso es el contenido frecuencial.
+
+### Energia RMS / Sonoridad
+
+La medida estandar de amplitud a corto plazo. En decibeles, un aumento de 10 dB corresponde aproximadamente a duplicar la sonoridad percibida. Aca se usa como proxy de la sonoridad instantanea.
+
+### Referencias
+
+- Basso, G. (2006). *Percepcion auditiva*. Editorial Universidad Nacional de Quilmes. ISBN 978-987-558-082-4. Cubre percepcion de sonoridad, timbre y el oido como analizador espectral.
+- Basso, G. (1999). *Analisis espectral: La transformada de Fourier en la musica*. EDULP, Universidad Nacional de La Plata. Analisis de Fourier aplicado a la musica, con las bases matematicas de la descomposicion espectral.
+- Miyara, F. (2006). *Acustica y sistemas de sonido* (4ta ed.). UNR Editora, Universidad Nacional de Rosario. ISBN 978-950-673-557-9. Capitulo 2 sobre psicoacustica: sonoridad, escala de fonios, curvas de ponderacion, timbre y formantes.
+- Roederer, J. G. (1997). *Acustica y psicoacustica de la musica*. Melos / Ricordi Americana. ISBN 978-987-611-219-2. Capitulos 3-4: fisica del sonido y percepcion psicoacustica.
+- Peeters, G. (2004). *A large set of audio features for sound description*. Informe tecnico del IRCAM. Secciones 4.2-4.3 sobre centroide espectral, ancho de banda espectral y clasificacion timbrica.
+- Grey, J. M. (1977). "Multidimensional perceptual scaling of musical timbres." *JASA*, 61(5), 1270-1277. Muestra que la distribucion de energia espectral es una dimension perceptual primaria del timbre.
+- McAdams, S. et al. (1995). "Perceptual scaling of synthesized musical timbres." *Psychological Research*, 58, 177-192. La dispersion espectral como eje perceptual para diferenciar timbres.
+- Fletcher, H. & Munson, W. A. (1933). "Loudness, its definition, measurement and calculation." *JASA*, 5(2), 82-108. El estudio clasico sobre percepcion de sonoridad y la relacion logaritmica (decibeles).
+- Giannoulis, D., Massberg, M., & Reiss, J. D. (2012). "Digital dynamic range compressor design." *JAES*, 60(6), 399-408. Medicion RMS en procesamiento de audio.
+- ITU-R BS.1770. Estandar internacional para medicion de sonoridad en radiodifusion.
+- Documentacion de librosa: [spectral_centroid](https://librosa.org/doc/latest/generated/librosa.feature.spectral_centroid.html), [spectral_bandwidth](https://librosa.org/doc/latest/generated/librosa.feature.spectral_bandwidth.html), [rms](https://librosa.org/doc/latest/generated/librosa.feature.rms.html)
