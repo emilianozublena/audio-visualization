@@ -36,7 +36,8 @@ warnings.filterwarnings("ignore", category=UserWarning)
 HOP_LENGTH   = 512       # Samples between each analysis frame
 N_FFT        = 2048      # FFT window size (frequency resolution)
 TRAIL_LENGTH = 70        # Number of past points in each track's trail
-FPS          = 30        # Animation framerate
+FPS          = 30        # Animation framerate (live playback)
+EXPORT_FPS   = 15        # Lower FPS for export — halves render time
 ROTATE_SPEED = 0.35      # Camera rotation speed (degrees per frame)
 BG_COLOR     = "#080810" # Dark background
 GRID_COLOR   = "#14142a"
@@ -213,11 +214,14 @@ def compare(audio_paths: list[str], export_path: str | None = None):
 
     max_time = max(t["times"][-1] for t in tracks)
 
+    fps = EXPORT_FPS if exporting else FPS
+
     if exporting:
         matplotlib.use("Agg")
 
     # ── FIGURE ────────────────────────────────────────────────────────────────
-    fig = plt.figure(figsize=(13, 9), facecolor=BG_COLOR)
+    fig_size = (8, 4.5) if exporting else (13, 9)
+    fig = plt.figure(figsize=fig_size, facecolor=BG_COLOR)
     ax  = fig.add_subplot(111, projection="3d")
     _style_ax(ax)
 
@@ -299,8 +303,23 @@ def compare(audio_paths: list[str], export_path: str | None = None):
                 audio_start[0] = time.perf_counter()
         fig.canvas.mpl_connect("draw_event", _start_audio)
 
+    # ── PRE-COMPUTE FRAME DATA (export only) ────────────────────────────────
+    # Avoid per-frame numpy allocations by pre-computing trail arrays
+    if exporting:
+        _precomputed = []
+        for t in tracks:
+            mt = TRAIL_LENGTH + 1
+            nf = t["n_frames"]
+            # Pre-compute the frame index for each animation frame
+            frame_count = int(max_time * fps) + fps
+            indices = np.minimum(
+                np.searchsorted(t["times"], np.arange(frame_count) / fps).astype(int),
+                nf - 1
+            )
+            _precomputed.append(dict(indices=indices, mt=mt))
+
     # ── ANIMATION ─────────────────────────────────────────────────────────────
-    total_frames = int(max_time * FPS) + FPS
+    total_frames = int(max_time * fps) + fps
 
     def update(frame_num):
         """Called every frame — updates both tracks' dots and trails."""
@@ -308,12 +327,15 @@ def compare(audio_paths: list[str], export_path: str | None = None):
         if not exporting and audio_start[0] is not None:
             elapsed = time.perf_counter() - audio_start[0]
         else:
-            elapsed = frame_num / FPS
+            elapsed = frame_num / fps
 
         # Update each track independently
         for idx, t in enumerate(tracks):
             nf = t["n_frames"]
-            i = min(int(np.searchsorted(t["times"], elapsed)), nf - 1)
+            if exporting:
+                i = _precomputed[idx]["indices"][frame_num]
+            else:
+                i = min(int(np.searchsorted(t["times"], elapsed)), nf - 1)
             start = max(0, i - TRAIL_LENGTH)
 
             xs = t["centroid_s"][start : i + 1]
@@ -360,7 +382,7 @@ def compare(audio_paths: list[str], export_path: str | None = None):
     anim = FuncAnimation(
         fig, update,
         frames=total_frames,
-        interval=1000 / FPS,
+        interval=1000 / fps,
         blit=False
     )
 
@@ -375,8 +397,6 @@ def compare(audio_paths: list[str], export_path: str | None = None):
 def _export_mp4(anim, audio_paths, export_path, total_frames):
     """Render animation to MP4: pipe raw frames to ffmpeg, then mux both audio tracks."""
     fig = anim._fig
-    dpi = 100
-    fig.set_dpi(dpi)
     fig.canvas.draw()
     w, h = fig.canvas.get_width_height()
 
@@ -390,12 +410,12 @@ def _export_mp4(anim, audio_paths, export_path, total_frames):
                 "ffmpeg", "-y",
                 "-f", "rawvideo", "-vcodec", "rawvideo",
                 "-s", f"{w}x{h}", "-pix_fmt", "rgba",
-                "-r", str(FPS),
+                "-r", str(EXPORT_FPS),
                 "-i", "-",
                 "-c:v", "libx264",
                 "-pix_fmt", "yuv420p",
-                "-preset", "fast",
-                "-crf", "20",
+                "-preset", "ultrafast",
+                "-crf", "23",
                 tmp_path,
             ],
             stdin=subprocess.PIPE,
@@ -406,7 +426,7 @@ def _export_mp4(anim, audio_paths, export_path, total_frames):
         print("ffmpeg not found — cannot export.")
         return
 
-    print(f"Rendering {total_frames} frames …")
+    print(f"Rendering {total_frames} frames @ {EXPORT_FPS} FPS …")
     t0 = time.perf_counter()
     for frame_num in range(total_frames):
         anim._func(frame_num)
